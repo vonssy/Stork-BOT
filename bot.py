@@ -331,16 +331,16 @@ class Stork:
                 )
 
                 ping = await self.validate_verfication(refresh_token, msg_hash, use_proxy, proxy)
-                if ping:
+                if ping and ping.get("message") == "ok":
                     self.print_message(refresh_token, proxy, Fore.GREEN, "PING Success")
 
             print(
                 f"{Fore.CYAN + Style.BRIGHT}[ {datetime.now().astimezone(wib).strftime('%x %X %Z')} ]{Style.RESET_ALL}"
                 f"{Fore.WHITE + Style.BRIGHT} | {Style.RESET_ALL}"
-                f"{Fore.BLUE + Style.BRIGHT}Wait For 60 Seconds For Next Ping...{Style.RESET_ALL}",
+                f"{Fore.BLUE + Style.BRIGHT}Wait For 5 Minutes For Next Ping...{Style.RESET_ALL}",
                 end="\r"
             )
-            await asyncio.sleep(1 * 60)
+            await asyncio.sleep(5 * 60)
         
     async def process_accounts(self, refresh_token: str, use_proxy: bool):
         self.access_tokens[refresh_token] = await self.get_new_token(refresh_token, use_proxy)
