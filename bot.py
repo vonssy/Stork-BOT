@@ -168,14 +168,14 @@ class Stork:
             except ValueError:
                 print(f"{Fore.RED + Style.BRIGHT}Invalid input. Enter a number (1, 2 or 3).{Style.RESET_ALL}")
 
-    async def refresh_token(self, refresh_token: str, proxy=None, retries=5):
+    async def refresh_token(self, refresh_token: str, use_proxy: bool, proxy=None):
         url = "https://stork-prod-apps.auth.ap-northeast-1.amazoncognito.com/oauth2/token"
         data = self.generate_payload(refresh_token)
         headers = {
             **self.headers,
             "Content-Type": "application/x-www-form-urlencoded"
         }
-        for attempt in range(retries):
+        while True:
             connector = ProxyConnector.from_url(proxy) if proxy else None
             try:
                 async with ClientSession(connector=connector, timeout=ClientTimeout(total=120)) as session:
@@ -184,13 +184,12 @@ class Stork:
                         result = await response.json()
                         return result['access_token']
             except (Exception, ClientResponseError) as e:
-                if attempt < retries - 1:
-                    await asyncio.sleep(5)
-                    continue
-                
-                return self.print_message(refresh_token, proxy, Fore.RED, f"GET Access Token Failed: {Fore.YELLOW+Style.BRIGHT}{str(e)}")
+                self.print_message(refresh_token, proxy, Fore.RED, f"GET Access Token Failed: {Fore.YELLOW+Style.BRIGHT}{str(e)}")
+                proxy = self.rotate_proxy_for_account(refresh_token) if use_proxy else None
+                await asyncio.sleep(5)
+                continue
     
-    async def user_info(self, refresh_token: str, use_proxy: bool, proxy=None, retries=5):
+    async def user_info(self, refresh_token: str, proxy=None, retries=5):
         url = "https://app-api.jp.stork-oracle.network/v1/me"
         headers = {
             **self.headers,
@@ -201,11 +200,6 @@ class Stork:
             try:
                 async with ClientSession(connector=connector, timeout=ClientTimeout(total=120)) as session:
                     async with session.get(url=url, headers=headers) as response:
-                        if response.status == 401:
-                            await self.get_new_token(refresh_token, use_proxy)
-                            headers["Authorization"] = f"Bearer {self.access_tokens[refresh_token]}"
-                            continue
-
                         response.raise_for_status()
                         result = await response.json()
                         return result['data']
@@ -213,10 +207,9 @@ class Stork:
                 if attempt < retries - 1:
                     await asyncio.sleep(5)
                     continue
-                
                 return self.print_message(refresh_token, proxy, Fore.RED, f"GET User Data Failed: {Fore.YELLOW+Style.BRIGHT}{str(e)}")
     
-    async def turn_on_verification(self, refresh_token: str, use_proxy: bool, proxy=None, retries=5):
+    async def turn_on_verification(self, refresh_token: str, proxy=None, retries=5):
         url = "https://app-api.jp.stork-oracle.network/v1/stork_signed_prices"
         headers = {
             **self.headers,
@@ -227,11 +220,6 @@ class Stork:
             try:
                 async with ClientSession(connector=connector, timeout=ClientTimeout(total=120)) as session:
                     async with session.get(url=url, headers=headers) as response:
-                        if response.status == 401:
-                            await self.get_new_token(refresh_token, use_proxy)
-                            headers["Authorization"] = f"Bearer {self.access_tokens[refresh_token]}"
-                            continue
-                        
                         response.raise_for_status()
                         result = await response.json()
                         return result['data']
@@ -239,10 +227,9 @@ class Stork:
                 if attempt < retries - 1:
                     await asyncio.sleep(5)
                     continue
-                
                 return self.print_message(refresh_token, proxy, Fore.RED, f"GET Message Hash Failed: {Fore.YELLOW+Style.BRIGHT}{str(e)}")
     
-    async def validate_verfication(self, refresh_token: str, msg_hash: str, use_proxy: bool, proxy=None, retries=5):
+    async def validate_verfication(self, refresh_token: str, msg_hash: str, proxy=None, retries=5):
         url = "https://app-api.jp.stork-oracle.network/v1/stork_signed_prices/validations"
         data = json.dumps({"msg_hash":msg_hash, "valid":True})
         headers = {
@@ -256,39 +243,28 @@ class Stork:
             try:
                 async with ClientSession(connector=connector, timeout=ClientTimeout(total=120)) as session:
                     async with session.post(url=url, headers=headers, data=data) as response:
-                        if response.status == 401:
-                            await self.get_new_token(refresh_token, use_proxy)
-                            headers["Authorization"] = f"Bearer {self.access_tokens[refresh_token]}"
-                            continue
-                        
                         response.raise_for_status()
                         return await response.json()
             except Exception as e:
                 if attempt < retries - 1:
                     await asyncio.sleep(5)
                     continue
-                
                 return self.print_message(refresh_token, proxy, Fore.RED, f"PING Failed: {Fore.YELLOW+Style.BRIGHT}{str(e)}")
             
     async def get_new_token(self, refresh_token: str, use_proxy: bool):
-        proxy = self.get_next_proxy_for_account(refresh_token) if use_proxy else None
-        access_token = None
-        while access_token is None:
-            access_token = await self.refresh_token(refresh_token, proxy)
-            if not access_token:
-                proxy = self.rotate_proxy_for_account(refresh_token) if use_proxy else None
-                await asyncio.sleep(5)
-                continue
-
-            self.access_tokens[refresh_token] = access_token
-            self.print_message(refresh_token, proxy, Fore.GREEN, "GET Access Token Success")
-            return self.access_tokens[refresh_token]
+        while True:
+            await asyncio.sleep(55 * 60)
+            proxy = self.get_next_proxy_for_account(refresh_token) if use_proxy else None
+            access_token = await self.refresh_token(refresh_token, use_proxy, proxy)
+            if access_token:
+                self.access_tokens[refresh_token] = access_token
+                self.print_message(refresh_token, proxy, Fore.GREEN, "Refreshing Access Token Success")
 
     async def process_user_earning(self, refresh_token: str, use_proxy: bool):
         while True:
             proxy = self.get_next_proxy_for_account(refresh_token) if use_proxy else None
 
-            user = await self.user_info(refresh_token, use_proxy, proxy)
+            user = await self.user_info(refresh_token, proxy)
             if user:
                 verified_msg = user.get("stats", {}).get("stork_signed_prices_valid_count", 0)
                 invalid_msg = user.get("stats", {}).get("stork_signed_prices_invalid_count", 0)
@@ -315,7 +291,7 @@ class Stork:
                 flush=True
             )
 
-            verify = await self.turn_on_verification(refresh_token, use_proxy, proxy)
+            verify = await self.turn_on_verification(refresh_token, proxy)
             if verify:
                 for key in verify:
                     if "USD" in key:
@@ -330,7 +306,7 @@ class Stork:
                     flush=True
                 )
 
-                ping = await self.validate_verfication(refresh_token, msg_hash, use_proxy, proxy)
+                ping = await self.validate_verfication(refresh_token, msg_hash, proxy)
                 if ping and ping.get("message") == "ok":
                     self.print_message(refresh_token, proxy, Fore.GREEN, "PING Success")
 
@@ -343,11 +319,18 @@ class Stork:
             await asyncio.sleep(5 * 60)
         
     async def process_accounts(self, refresh_token: str, use_proxy: bool):
-        self.access_tokens[refresh_token] = await self.get_new_token(refresh_token, use_proxy)
-        if self.access_tokens[refresh_token]:
-            tasks = []
-            tasks.append(asyncio.create_task(self.process_user_earning(refresh_token, use_proxy)))
-            tasks.append(asyncio.create_task(self.process_send_ping(refresh_token, use_proxy)))
+        proxy = self.get_next_proxy_for_account(refresh_token) if use_proxy else None
+        access_token = await self.refresh_token(refresh_token, use_proxy, proxy)
+
+        if access_token:
+            self.access_tokens[refresh_token] = access_token
+            self.print_message(refresh_token, proxy, Fore.GREEN, "GET Access Token Success")
+
+            tasks = [
+                asyncio.create_task(self.get_new_token(refresh_token, use_proxy)),
+                asyncio.create_task(self.process_user_earning(refresh_token, use_proxy)),
+                asyncio.create_task(self.process_send_ping(refresh_token, use_proxy))
+            ]
             await asyncio.gather(*tasks)
 
     async def main(self):
