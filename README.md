@@ -34,17 +34,18 @@ Stork Verify BOT
 
 ## Configuration
 
-### Screenshots
-
-<div style="text-align: center;">
-  <h4><strong>Refresh Token</strong></h4>
-  <img src="image.png" alt="Image" width="500"/>
-</div>
-
-- **tokens.txt:** You will find the file `tokens.txt` inside the project directory. Make sure `tokens.txt` contains data that matches the format expected by the script. Here are examples of file formats:
+- **accounts.json:** You will find the file `accounts.json` inside the project directory. Make sure `accounts.json` contains data that matches the format expected by the script. Here are examples of file formats:
   ```bash
-  your_refresh_token_1
-  your_refresh_token_2
+  [
+      {
+          "Email": "your email address 1",
+          "Password": "your password 1"
+      },
+      {
+          "Email": "your email address 2",
+          "Password": "your password 2"
+      }
+  ]
   ```
 
 - **proxy.txt:** You will find the file `proxy.txt` inside the project directory. Make sure `proxy.txt` contains data that matches the format expected by the script. Here are examples of file formats:
