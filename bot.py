@@ -7,7 +7,7 @@ from aiohttp_socks import ProxyConnector
 from fake_useragent import FakeUserAgent
 from datetime import datetime
 from colorama import *
-import asyncio, json, os, pytz
+import asyncio, random, json, os, pytz
 
 wib = pytz.timezone('Asia/Jakarta')
 
@@ -163,7 +163,7 @@ class Stork:
             except ValueError:
                 print(f"{Fore.RED + Style.BRIGHT}Invalid input. Enter a number (1, 2 or 3).{Style.RESET_ALL}")
 
-    async def user_login(self, email: str, password: str, use_proxy: bool, proxy=None):
+    async def user_login(self, email: str, password: str, use_proxy: bool, proxy=None, retries=5):
         url = "https://app-auth.jp.stork-oracle.network/token?grant_type=password"
         data = json.dumps({"email":email, "password":password})
         headers = {
@@ -174,20 +174,30 @@ class Stork:
             "Referer": "https://app.stork.network/",
         }
         while True:
-            connector = ProxyConnector.from_url(proxy) if proxy else None
-            try:
-                async with ClientSession(connector=connector, timeout=ClientTimeout(total=120)) as session:
-                    async with session.post(url=url, headers=headers, data=data) as response:
-                        if response.status == 400:
-                            return self.print_message(email, proxy, Fore.RED, f"GET Access Token Failed: {Fore.YELLOW+Style.BRIGHT}Update & Open Your Stork Extension, Then Reset Your Password First")
-                        response.raise_for_status()
-                        result = await response.json()
-                        return result["access_token"]
-            except (Exception, ClientResponseError) as e:
-                self.print_message(email, proxy, Fore.RED, f"GET Access Token Failed: {Fore.YELLOW+Style.BRIGHT}{str(e)}")
-                proxy = self.rotate_proxy_for_account(email) if use_proxy else None
-                await asyncio.sleep(5)
-                continue
+            for attempt in range(retries):
+                connector = ProxyConnector.from_url(proxy) if proxy else None
+                try:
+                    async with ClientSession(connector=connector, timeout=ClientTimeout(total=120)) as session:
+                        async with session.post(url=url, headers=headers, data=data) as response:
+                            if response.status == 400:
+                                return self.print_message(email, proxy, Fore.RED, f"GET Access Token Failed: {Fore.YELLOW+Style.BRIGHT}Update & Open Your Stork Extension, Then Reset Your Password First")
+                            response.raise_for_status()
+                            result = await response.json()
+                            return result["access_token"]
+                except (Exception, ClientResponseError) as e:
+                    if "429" in str(e):
+                        self.print_message(email, proxy, Fore.RED, f"GET Access Token Failed: {Fore.YELLOW+Style.BRIGHT}Too Many Request! Wait For 5-10 Minutes.")
+                        await asyncio.sleep(random.randint(300, 600))
+                        if attempt < retries - 1:
+                            proxy = self.rotate_proxy_for_account(email) if use_proxy else None
+                    elif any(code in str(e) for code in ["500", "501", "502", "503", "504"]):
+                        self.print_message(email, proxy, Fore.RED, f"GET Access Token Failed: {Fore.YELLOW+Style.BRIGHT}Stork Server Down")
+                        await asyncio.sleep(5)
+                    else:
+                        self.print_message(email, proxy, Fore.RED, f"GET Access Token Failed: {Fore.YELLOW+Style.BRIGHT}{str(e)}")
+                        proxy = self.rotate_proxy_for_account(email) if use_proxy else None
+                        await asyncio.sleep(5)
+                    continue
     
     async def user_info(self, email: str, proxy=None, retries=5):
         url = "https://app-api.jp.stork-oracle.network/v1/me"
@@ -324,7 +334,6 @@ class Stork:
     async def process_accounts(self, email: str, password: str, use_proxy: bool):
         proxy = self.get_next_proxy_for_account(email) if use_proxy else None
         access_token = await self.user_login(email, password, use_proxy, proxy)
-
         if access_token:
             self.access_tokens[email] = access_token
             self.print_message(email, proxy, Fore.GREEN, "GET Access Token Success")
