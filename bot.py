@@ -4,10 +4,9 @@ from aiohttp import (
     ClientTimeout
 )
 from aiohttp_socks import ProxyConnector
-from fake_useragent import FakeUserAgent
 from datetime import datetime
 from colorama import *
-import asyncio, random, json, os, pytz
+import asyncio, json, os, pytz
 
 wib = pytz.timezone('Asia/Jakarta')
 
@@ -19,12 +18,15 @@ class Stork:
             "Sec-Fetch-Dest": "empty",
             "Sec-Fetch-Mode": "cors",
             "Sec-Fetch-Site": "cross-site",
-            "User-Agent": FakeUserAgent().random
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
         }
+        self.GOTRUE_API_URL = "https://app-auth.jp.stork-oracle.network"
+        self.STORK_API_URL = "https://app-api.jp.stork-oracle.network"
         self.proxies = []
         self.proxy_index = 0
         self.account_proxies = {}
         self.access_tokens = {}
+        self.refresh_tokens = {}
 
     def clear_terminal(self):
         os.system('cls' if os.name == 'nt' else 'clear')
@@ -163,44 +165,57 @@ class Stork:
             except ValueError:
                 print(f"{Fore.RED + Style.BRIGHT}Invalid input. Enter a number (1, 2 or 3).{Style.RESET_ALL}")
 
-    async def user_login(self, email: str, password: str, use_proxy: bool, proxy=None, retries=5):
-        url = "https://app-auth.jp.stork-oracle.network/token?grant_type=password"
+    async def user_login(self, email: str, password: str, proxy=None, retries=5):
+        url = f"{self.GOTRUE_API_URL}/token?grant_type=password"
         data = json.dumps({"email":email, "password":password})
         headers = {
             **self.headers,
             "Content-Length": str(len(data)),
             "Content-Type": "application/json",
             "Origin": "https://app.stork.network",
-            "Referer": "https://app.stork.network/",
+            "Referer": "https://app.stork.network/"
         }
-        while True:
-            for attempt in range(retries):
-                connector = ProxyConnector.from_url(proxy) if proxy else None
-                try:
-                    async with ClientSession(connector=connector, timeout=ClientTimeout(total=120)) as session:
-                        async with session.post(url=url, headers=headers, data=data) as response:
-                            if response.status == 400:
-                                return self.print_message(email, proxy, Fore.RED, f"GET Access Token Failed: {Fore.YELLOW+Style.BRIGHT}Update & Open Your Stork Extension, Then Reset Your Password First")
-                            response.raise_for_status()
-                            result = await response.json()
-                            return result["access_token"]
-                except (Exception, ClientResponseError) as e:
-                    if "429" in str(e):
-                        self.print_message(email, proxy, Fore.RED, f"GET Access Token Failed: {Fore.YELLOW+Style.BRIGHT}Too Many Request! Wait For 5-10 Minutes.")
-                        await asyncio.sleep(random.randint(300, 600))
-                        if attempt < retries - 1:
-                            proxy = self.rotate_proxy_for_account(email) if use_proxy else None
-                    elif any(code in str(e) for code in ["500", "501", "502", "503", "504"]):
-                        self.print_message(email, proxy, Fore.RED, f"GET Access Token Failed: {Fore.YELLOW+Style.BRIGHT}Stork Server Down")
-                        await asyncio.sleep(5)
-                    else:
-                        self.print_message(email, proxy, Fore.RED, f"GET Access Token Failed: {Fore.YELLOW+Style.BRIGHT}{str(e)}")
-                        proxy = self.rotate_proxy_for_account(email) if use_proxy else None
-                        await asyncio.sleep(5)
+        for attempt in range(retries):
+            connector = ProxyConnector.from_url(proxy) if proxy else None
+            try:
+                async with ClientSession(connector=connector, timeout=ClientTimeout(total=60)) as session:
+                    async with session.post(url=url, headers=headers, data=data) as response:
+                        response.raise_for_status()
+                        return await response.json()
+            except (Exception, ClientResponseError) as e:
+                if attempt < retries - 1:
+                    await asyncio.sleep(5)
                     continue
+                return self.print_message(email, proxy, Fore.RED, f"Login Failed: {Fore.YELLOW+Style.BRIGHT}{str(e)}")
+
+    async def refresh_token(self, email: str, password: str, use_proxy: bool, proxy=None, retries=5):
+        url = f"{self.GOTRUE_API_URL}/token?grant_type=refresh_token"
+        data = json.dumps({"refresh_token":self.refresh_tokens[email]})
+        headers = {
+            **self.headers,
+            "Content-Length": str(len(data)),
+            "Content-Type": "application/json",
+            "Origin": "chrome-extension://knnliglhgkmlblppdejchidfihjnockl"
+        }
+        for attempt in range(retries):
+            connector = ProxyConnector.from_url(proxy) if proxy else None
+            try:
+                async with ClientSession(connector=connector, timeout=ClientTimeout(total=120)) as session:
+                    async with session.post(url=url, headers=headers, data=data) as response:
+                        if response.status == 401:
+                            await self.process_user_login(email, password, use_proxy)
+                            data = json.dumps({"refresh_token":self.refresh_tokens[email]})
+                            continue
+                        response.raise_for_status()
+                        return await response.json()
+            except (Exception, ClientResponseError) as e:
+                if attempt < retries - 1:
+                    await asyncio.sleep(5)
+                    continue
+                return self.print_message(email, proxy, Fore.RED, f"Refresh Token Failed: {Fore.YELLOW+Style.BRIGHT}{str(e)}")
     
     async def user_info(self, email: str, proxy=None, retries=5):
-        url = "https://app-api.jp.stork-oracle.network/v1/me"
+        url = f"{self.STORK_API_URL}/v1/me"
         headers = {
             **self.headers,
             "Authorization": f"Bearer {self.access_tokens[email]}",
@@ -221,7 +236,7 @@ class Stork:
                 return self.print_message(email, proxy, Fore.RED, f"GET User Data Failed: {Fore.YELLOW+Style.BRIGHT}{str(e)}")
     
     async def turn_on_verification(self, email: str, proxy=None, retries=5):
-        url = "https://app-api.jp.stork-oracle.network/v1/stork_signed_prices"
+        url = f"{self.STORK_API_URL}/v1/stork_signed_prices"
         headers = {
             **self.headers,
             "Authorization": f"Bearer {self.access_tokens[email]}",
@@ -242,7 +257,7 @@ class Stork:
                 return self.print_message(email, proxy, Fore.RED, f"GET Message Hash Failed: {Fore.YELLOW+Style.BRIGHT}{str(e)}")
     
     async def validate_verfication(self, email: str, msg_hash: str, proxy=None, retries=5):
-        url = "https://app-api.jp.stork-oracle.network/v1/stork_signed_prices/validations"
+        url = f"{self.STORK_API_URL}/v1/stork_signed_prices/validations"
         data = json.dumps({"msg_hash":msg_hash, "valid":True})
         headers = {
             **self.headers,
@@ -254,7 +269,7 @@ class Stork:
         for attempt in range(retries):
             connector = ProxyConnector.from_url(proxy) if proxy else None
             try:
-                async with ClientSession(connector=connector, timeout=ClientTimeout(total=120)) as session:
+                async with ClientSession(connector=connector, timeout=ClientTimeout(total=60)) as session:
                     async with session.post(url=url, headers=headers, data=data) as response:
                         response.raise_for_status()
                         return await response.json()
@@ -264,14 +279,39 @@ class Stork:
                     continue
                 return self.print_message(email, proxy, Fore.RED, f"PING Failed: {Fore.YELLOW+Style.BRIGHT}{str(e)}")
             
-    async def get_new_token(self, email: str, password: str, use_proxy: bool):
+    async def process_user_login(self, email: str, password: str, use_proxy: bool):
+        proxy = self.get_next_proxy_for_account(email) if use_proxy else None
+        token = None
+        while token is None:
+            token = await self.user_login(email, password, proxy)
+            if not token:
+                await asyncio.sleep(5)
+                proxy = self.rotate_proxy_for_account(email) if use_proxy else None
+                continue
+
+            self.access_tokens[email] = token["access_token"]
+            self.refresh_tokens[email] = token["refresh_token"]
+
+            self.print_message(email, proxy, Fore.GREEN, "Login Success")
+            return self.access_tokens[email], self.refresh_tokens[email]
+
+    async def process_refreshing_token(self, email: str, password: str, use_proxy: bool):
         while True:
             await asyncio.sleep(55 * 60)
+
             proxy = self.get_next_proxy_for_account(email) if use_proxy else None
-            access_token = await self.user_login(email, password, use_proxy, proxy)
-            if access_token:
-                self.access_tokens[email] = access_token
-                self.print_message(email, proxy, Fore.GREEN, "Refreshing Access Token Success")
+            token = None
+            while token is None:
+                token = await self.refresh_token(email, password, use_proxy, proxy)
+                if not token:
+                    await asyncio.sleep(5)
+                    proxy = self.rotate_proxy_for_account(email) if use_proxy else None
+                    continue
+
+                self.access_tokens[email] = token["access_token"]
+                self.refresh_tokens[email] = token["refresh_token"]
+
+                self.print_message(email, proxy, Fore.GREEN, "Refresh Token Success")
 
     async def process_user_earning(self, email: str, use_proxy: bool):
         while True:
@@ -332,14 +372,10 @@ class Stork:
             await asyncio.sleep(5 * 60)
         
     async def process_accounts(self, email: str, password: str, use_proxy: bool):
-        proxy = self.get_next_proxy_for_account(email) if use_proxy else None
-        access_token = await self.user_login(email, password, use_proxy, proxy)
-        if access_token:
-            self.access_tokens[email] = access_token
-            self.print_message(email, proxy, Fore.GREEN, "GET Access Token Success")
-
+        self.access_tokens[email], self.refresh_tokens[email] = await self.process_user_login(email, password, use_proxy)
+        if self.access_tokens[email] and self.refresh_tokens[email]:
             tasks = [
-                asyncio.create_task(self.get_new_token(email, password, use_proxy)),
+                asyncio.create_task(self.process_refreshing_token(email, password, use_proxy)),
                 asyncio.create_task(self.process_user_earning(email, use_proxy)),
                 asyncio.create_task(self.process_send_ping(email, use_proxy))
             ]
