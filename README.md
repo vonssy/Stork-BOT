@@ -13,6 +13,8 @@ Stork Verify BOT
   - Auto Reporting Messages
   - Multi Accounts With Threads
 
+### Note: Don't Run Multiple Accounts With Same Ip, High Risk For Banned.
+
 ## Requiremnets
 
 - Make sure you have Python3.9 or higher installed and pip.
